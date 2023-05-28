@@ -9,12 +9,15 @@
         <RepositoryType>git</RepositoryType>
         <PackageTags>bing;chat;ai</PackageTags>
         
+        <LangVersion>11</LangVersion>
         <TargetFramework>net6.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="System.IO.Pipelines" Version="7.0.0" />
+      <PackageReference Include="System.Linq.Async" Version="6.0.1" />
       <PackageReference Include="Websocket.Client" Version="4.4.43" />
     </ItemGroup>
 

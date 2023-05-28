@@ -1,4 +1,5 @@
-﻿using Spectre.Console;
+﻿using System.Threading.Channels;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 namespace BingChat.Cli.Commands;
@@ -77,9 +78,7 @@ public sealed class ConversationCommand : AsyncCommand<ConversationCommand.Setti
                     conversation = await client.CreateConversation();
                 }
 
-                await AnsiConsole.Status()
-                    .Spinner(Spinner.Known.BouncingBar)
-                    .StartAsync("Bing is thinking...", async _ => { answer = await conversation.AskAsync(text); });
+                answer = await conversation.AskAsync2(text);
 
                 if (answer.EndsWith("\n<Disengaged>"))
                 {

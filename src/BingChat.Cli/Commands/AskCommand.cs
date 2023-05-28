@@ -20,10 +20,8 @@ public sealed class AskCommand : AsyncCommand<AskCommand.Settings>
         var answer = string.Empty;
 
         Utils.WriteMessage(message, settings);
-        
-        await AnsiConsole.Status()
-            .Spinner(Spinner.Known.BouncingBar)
-            .StartAsync("Bing is thinking...", async _ => { answer = await client.AskAsync(message); });
+
+        answer = await client.AskAsync2(message);
 
         Utils.WriteAnswer(answer, settings);
 

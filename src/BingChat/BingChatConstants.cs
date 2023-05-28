@@ -2,25 +2,26 @@ namespace BingChat;
 
 internal static class BingChatConstants
 {
+    internal const byte ChatHubTerminalChar = (byte)'\u001e';
+
+    internal static readonly ReadOnlyMemory<byte> ChatHubInfo =
+        "{\"protocol\":\"json\",\"version\":1}\u001e"u8.ToArray();
+
     internal static readonly string[] OptionSets = new[]
     {
         "nlu_direct_response_filter",
         "deepleo",
-        "enable_debug_commands",
         "disable_emoji_spoken_text",
         "responsible_ai_policy_235",
         "enablemm",
-        "cachewriteext",
-        "e2ecachewrite",
-        "nodlcpcwrite",
-        "nointernalsugg",
-        "saharasugg",
-        "rai267",
-        "sportsansgnd",
-        "enablenewsfc",
+        "osbsdusgrec",
+        "objopinion",
+        "dsblhlthcrd",
+        "chatgptretry",
+        "oaimxcnk1024",
+        "knowimgv2",
         "dv3sugg",
-        "autosave",
-        "dlislog"
+        "autosave"
     };
 
     internal static readonly string[] CreativeOptionSets = OptionSets
@@ -35,20 +36,25 @@ internal static class BingChatConstants
         .Concat(new[] { "galileo" })
         .ToArray();
 
+    // GPT-4?
+    internal static readonly string[] BalancedOldOptionSets = OptionSets
+        .Concat(new[] { "h3balanced", "harmonyv3", "gencontentv3" })
+        .ToArray();
+
     internal static readonly string[] AllowedMessageTypes = new[]
     {
+        "ActionRequest",
         "Chat",
+        "Context",
         "InternalSearchQuery",
         "InternalSearchResult",
+        // "Disengaged",
         "InternalLoaderMessage",
-        "Disengaged",
-        "ActionRequest",
-        "Context",
         "Progress",
         "RenderCardRequest",
         "AdsQuery",
         "SemanticSerp",
         "GenerateContentQuery",
-        "SearchQuery",
+        "SearchQuery"
     };
 }

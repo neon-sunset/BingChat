@@ -118,7 +118,13 @@ public sealed class BingChatClient : IBingChattable
     public async Task<string> AskAsync(string message)
     {
         var conversation = await CreateConversation();
-        return await conversation.AskAsync(message);
+        return await conversation.AskAsync2(message);
+    }
+
+    public async Task<string> AskAsync2(string message, CancellationToken ct = default)
+    {
+        var conversation = await CreateConversation();
+        return await conversation.AskAsync2(message, ct);
     }
 }
 
