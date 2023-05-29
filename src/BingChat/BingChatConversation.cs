@@ -1,11 +1,15 @@
-﻿using System.Buffers;
-using System.IO.Pipelines;
-using System.IO.Pipes;
-using System.Net.WebSockets;
+﻿using System.Net.WebSockets;
 using System.Reactive.Linq;
-using System.Text;
 using System.Text.Json;
-using Websocket.Client;
+using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.Http.Connections.Client;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.AspNetCore.SignalR.Protocol;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace BingChat;
 
@@ -14,9 +18,28 @@ namespace BingChat;
 /// </summary>
 internal sealed class BingChatConversation : IBingChattable
 {
-    private const char TerminalChar = '\u001e';
-    private static readonly ReadOnlyMemory<byte> ProtocolMsg = "{\"protocol\":\"json\",\"version\":1}\u001e"u8.ToArray();
-    private static readonly ReadOnlyMemory<byte> KeepAliveMsg = "{\"type\":6}\u001e"u8.ToArray();
+    private static readonly HttpConnectionFactory ConnectionFactory = new(Options.Create(
+        new HttpConnectionOptions
+        {
+            DefaultTransferFormat = TransferFormat.Text,
+            SkipNegotiation = true,
+            Transports = HttpTransportType.WebSockets,
+            Headers =
+            {
+                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                                "Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.57"
+            }
+        }),
+        NullLoggerFactory.Instance);
+
+    private static readonly JsonHubProtocol HubProtocol = new(
+        Options.Create(new JsonHubProtocolOptions()
+        {
+            PayloadSerializerOptions = SerializerContext.Default.Options
+        }));
+
+    private static readonly UriEndPoint HubEndpoint = new(new Uri("wss://sydney.bing.com/sydney/ChatHub"));
 
     private readonly BingChatRequest _request;
 
@@ -29,118 +52,72 @@ internal sealed class BingChatConversation : IBingChattable
     // This will be completely rewritten
     public async Task<string> AskAsync2(string message, CancellationToken ct = default)
     {
-        var buffer = new ArrayBufferWriter<byte>(256);
-        using var writer = new Utf8JsonWriter(buffer);
+        var opts = new HttpConnectionOptions
+        {
+            DefaultTransferFormat = TransferFormat.Text,
+            SkipNegotiation = true,
+            Transports = HttpTransportType.WebSockets,
+            Headers =
+            {
+                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.57"
+            }
+        };
+        var protocol = new JsonHubProtocol(Options.Create(new JsonHubProtocolOptions()
+        {
+            PayloadSerializerOptions = SerializerContext.Default.Options
+        }));
 
-        JsonSerializer.Serialize(
-            writer,
-            _request.ConstructInitialPayload(message),
-            SerializerContext.Default.BingChatConversationRequest);
-        buffer.Write(stackalloc[] { (byte)TerminalChar });
+        var factory = new HttpConnectionFactory(Options.Create(opts), NullLoggerFactory.Instance);
 
-        var initialPayload = buffer.WrittenMemory;
+        await using var conn = new HubConnection(
+            factory,
+            protocol,
+            new UriEndPoint(new Uri("wss://sydney.bing.com/sydney/ChatHub")),
+            new ServiceCollection().BuildServiceProvider(),
+            NullLoggerFactory.Instance);
 
-        using var ws = new ClientWebSocket();
-        await ws.ConnectAsync(new Uri("wss://sydney.bing.com/sydney/ChatHub"), ct);
+        using var update = conn.On<string>("update", Console.WriteLine);
 
-        // Start the chat response session by sending protocol version and type
-        await ws.SendAsync(ProtocolMsg, WebSocketMessageType.Text, endOfMessage: true, ct);
-        // Schedule keep alive messages
-        using var keepAlive = new Timer(
-            async _ => await ws.SendAsync(KeepAliveMsg, WebSocketMessageType.Text, endOfMessage: true, ct),
-            null,
-            TimeSpan.FromMilliseconds(0),
-            TimeSpan.FromSeconds(16));
-        // I have no idea what this is for, but Edge sends it
-        await ws.SendAsync(KeepAliveMsg, WebSocketMessageType.Text, endOfMessage: true, ct);
-        // Send the initial payload with user prompt
-        await ws.SendAsync(initialPayload, WebSocketMessageType.Text, endOfMessage: true, ct);
+        var req = _request.ConstructInitialPayload(message);
+        await conn.StartAsync(ct);
 
-        var response = await ws
-            .ReadAllMessages(ct)
-            .Select(BingChatConversationResponse.FromJson)
-            .Where(msg => msg is { Type: 2 })
+        return await conn
+            .StreamAsync<string>("chat", req.Arguments[0], ct)
             .FirstAsync(ct);
-
-        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, ct);
-        return BuildAnswer(response!) ?? "<empty answer>";
     }
 
     /// <inheritdoc/>
-    public Task<string> AskAsync(string message)
+    public async Task<string> AskAsync(string message)
     {
-        var wsClient = new WebsocketClient(new Uri("wss://sydney.bing.com/sydney/ChatHub"));
-        var tcs = new TaskCompletionSource<string>();
+        var request = _request.ConstructInitialPayload(message).Arguments[0];
 
-        void OnMessageReceived(string text)
-        {
-            try
-            {
-                foreach (var part in text.Split(TerminalChar, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var json = JsonSerializer.Deserialize(part, SerializerContext.Default.BingChatConversationResponse);
+        await using var conn = new HubConnection(
+            ConnectionFactory,
+            HubProtocol,
+            HubEndpoint,
+            new ServiceCollection().BuildServiceProvider(),
+            NullLoggerFactory.Instance);
 
-                    if (json is not { Type: 2 }) continue;
+        await conn.StartAsync();
 
-                    Cleanup();
+        var response = await conn
+            .StreamAsync<ResponseItem>("chat", request)
+            .FirstAsync();
 
-                    tcs.SetResult(BuildAnswer(json) ?? "<empty answer>");
-                    return;
-                }
-            }
-            catch (Exception e)
-            {
-                Cleanup();
-                tcs.SetException(e);
-            }
-        }
-
-        void Cleanup()
-        {
-            wsClient.Stop(WebSocketCloseStatus.Empty, string.Empty).ContinueWith(t =>
-            {
-                if (t.IsFaulted) tcs.SetException(t.Exception!);
-                wsClient.Dispose();
-            });
-        }
-
-        wsClient.MessageReceived
-                .Where(msg => msg.MessageType == WebSocketMessageType.Text)
-                .Select(msg => msg.Text)
-                .Subscribe(OnMessageReceived);
-
-        // Start the WebSocket client
-        wsClient.Start().ContinueWith(t =>
-        {
-            if (t.IsFaulted)
-            {
-                Cleanup();
-                tcs.SetException(t.Exception!);
-                return;
-            }
-
-            var initialPayload = JsonSerializer.Serialize(
-                _request.ConstructInitialPayload(message), SerializerContext.Default.BingChatConversationRequest);
-
-            // Send initial messages
-            wsClient.Send("{\"protocol\":\"json\",\"version\":1}" + TerminalChar);
-            wsClient.Send(initialPayload + TerminalChar);
-        });
-
-        return tcs.Task;
+        return BuildAnswer(response) ?? "<empty answer>";
     }
 
-    private static string? BuildAnswer(BingChatConversationResponse response)
+    private static string? BuildAnswer(ResponseItem response)
     {
         //Check status
-        if (!response.Item.Result.Value.Equals("Success", StringComparison.OrdinalIgnoreCase))
+        if (!response.Result.Value.Equals("Success", StringComparison.OrdinalIgnoreCase))
         {
-            throw new BingChatException($"{response.Item.Result.Value}: {response.Item.Result.Message}");
+            throw new BingChatException($"{response.Result.Value}: {response.Result.Message}");
         }
 
         //Collect messages, including of types: Chat, SearchQuery, LoaderMessage, Disengaged
         var messages = new List<string>();
-        foreach (var itemMessage in response.Item.Messages)
+        foreach (var itemMessage in response.Messages)
         {
             //Not needed
             if (itemMessage.Author != "bot") continue;

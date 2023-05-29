@@ -44,7 +44,7 @@ internal sealed class BingChatRequest
                     {
                         BingChatTone.Creative => BingChatConstants.CreativeOptionSets,
                         BingChatTone.Precise => BingChatConstants.PreciseOptionSets,
-                        BingChatTone.Balanced or _ => BingChatConstants.BalancedOptionSets
+                        BingChatTone.Balanced or _ => BingChatConstants.BalancedOldOptionSets
                     },
                     AllowedMessageTypes = BingChatConstants.AllowedMessageTypes,
                     SliceIds = Array.Empty<string>(),
